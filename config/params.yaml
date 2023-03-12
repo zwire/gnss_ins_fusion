@@ -1,0 +1,12 @@
+gnss_ins_fusion_node:
+  ros__parameters:
+    log_path: "log.csv"
+    noise_std_dev: 2.0  # arbitrary addition of noise
+    noise_duration: 15  # seconds
+    type: "pf"         # ekf ukf pf
+    particles: 300      # applied only when using particle filter
+    std_x: 0.1          # longitudinal position standard deviation in transition (m)
+    std_y: 0.1          # lateral position standard deviation in transition (m)
+    std_yaw: 0.01       # angle standard deviation in transition (rad)
+    speed: 0.7          # vehicle speed (m/s)
+    yaw: 0.0            # initial heading angle (rad)
