@@ -48,6 +48,7 @@ class SequentialBayesianFilter
   // where: W ~ Q, V ~ R
 
 protected:
+  SequentialBayesianFilter(){}
   int _k;       // state vector size
   int _m;       // observation vector size
   int _n;       // control vector size
@@ -80,16 +81,13 @@ public:
     P = MatrixXd::Identity(_k, _k);
     Q = MatrixXd::Identity(_k, _k);
     R = MatrixXd::Identity(_m, _m);
-    transition_func  = [this](TransitionVariables v)
+    transition_func = [this](TransitionVariables v)
     { 
-      VectorXd a = (*this).A * v.X;
-      if (v.U.size() > 0) a += (*this).B * v.U;
+      VectorXd a = A * v.X;
+      if (v.U.size() > 0) a += B * v.U;
       return a * v.dt;
     };
-    observation_func = [this](ObservationVariables v)
-    { 
-      return (*this).C * v.X;
-    };
+    observation_func = [this](ObservationVariables v) { return C * v.X; };
   }
 
   virtual ~SequentialBayesianFilter() {}
@@ -114,6 +112,10 @@ public:
 
 class ExtendedKalmanFilter final : public SequentialBayesianFilter
 {
+private:
+  explicit ExtendedKalmanFilter(const ExtendedKalmanFilter&) : SequentialBayesianFilter(){}
+  void operator=(const ExtendedKalmanFilter&){}
+
 public:
   explicit ExtendedKalmanFilter(
     const VectorXd& x0, 
@@ -121,12 +123,13 @@ public:
     const int& control_vector_size
   ) : SequentialBayesianFilter(x0, observation_vector_size, control_vector_size) {}
 
-  // please update jacobian (A: transition, B: control) in advance if you need.
+  // please update Jacobian (A: transition) in advance if you need.
   VectorXd predict(const VectorXd& u) override
   {
     if (dt <= 0) throw logic_error("Require: dt > 0");
-    P = A * P * A.transpose() + Q;                              // predict estimate covariance
     X = transition_func(TransitionVariables(X, u, dt));         // predict state estimate
+    P = A * P * A.transpose() + Q;                              // predict estimate covariance
+    P = (P + P.transpose()) * 0.5;
     return X;
   }
 
@@ -138,6 +141,7 @@ public:
     MatrixXd K = P * C.transpose() * S.inverse();               // optimal kalman gain
     X += K * E;                                                 // update state estimate
     P -= K * C * P;                                             // update estimate covariance
+    P = (P + P.transpose()) * 0.5;
     return X;
   }
 
@@ -148,6 +152,8 @@ public:
 class UnscentedKalmanFilter final : public SequentialBayesianFilter
 {
 private:
+  explicit UnscentedKalmanFilter(const UnscentedKalmanFilter&) : SequentialBayesianFilter(){}
+  void operator=(const UnscentedKalmanFilter&){}
   double _lambda;
   double _wi;
   double _ws0;
@@ -206,6 +212,7 @@ public:
     // update X, P
     X = x;
     P = p + Q;
+    P = (P + P.transpose()) * 0.5;
     return X;
   }
 
@@ -236,6 +243,7 @@ public:
     MatrixXd K = Cxy * S.inverse();   // optimal kalman gain
     X += K * E;                       // update state estimate
     P -= K * S * K.transpose();       // update estimate covariance
+    P = (P + P.transpose()) * 0.5;
     return X;
   }
 
@@ -258,10 +266,13 @@ struct Particle final
 class ParticleFilter final : public SequentialBayesianFilter
 {
 private:
+  explicit ParticleFilter(const ParticleFilter&) : SequentialBayesianFilter(){}
+  void operator=(const ParticleFilter&){}
+
   void randomize(vector<Particle>& ps) const
   {
-    random_device seed_gen;
-    default_random_engine engine(seed_gen());
+    random_device seed;
+    default_random_engine engine(seed());
     for (int i = 0; i< (int)ps.size(); i++)
     {
       for (int j = 0; j < _k; j++)
@@ -333,7 +344,7 @@ public:
     // fitting a Gaussian distribution
     get_likelihood_func = [this](const VectorXd& e)
     {
-      return -0.5 * (e.transpose() * (*this).R.inverse() * e)(0, 0);
+      return exp(-0.5 * (e.transpose() * R.inverse() * e)(0, 0));
     };
   }
 

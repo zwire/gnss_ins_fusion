@@ -41,7 +41,7 @@ int main(int argc, char* argv[])
   RCLCPP_INFO(node->get_logger(), "Configuring Node...");
   node->declare_parameter("log_path", "");
   node->declare_parameter("noise_std_dev", 0.0);
-  node->declare_parameter("noise_duration", 0);
+  node->declare_parameter("noise_interval", 0);
   node->declare_parameter("particles", 0);
   node->declare_parameter("type", "");
   node->declare_parameter("std_x", 0.0);
@@ -51,32 +51,33 @@ int main(int argc, char* argv[])
   node->declare_parameter("yaw", 0.0);
 
   ofstream ofs(node->get_parameter("log_path").as_string());
-  ofs << "predicted,,observed,," << endl;
-  ofs << "x,y,x,y,yawrate" << endl;
+  ofs << "predicted,,observed,,,error" << endl;
+  ofs << "x,y,x,y,yawrate,m" << endl;
 
   auto noise_std_dev = node->get_parameter("noise_std_dev").as_double();  // arbitrary addition of noise
-  auto noise_duration = node->get_parameter("noise_duration").as_int();   // seconds
+  auto noise_interval = node->get_parameter("noise_interval").as_int();   // iteration
 
   auto particles = node->get_parameter("particles").as_int();  // applied only when using particle filter
   auto std_x = node->get_parameter("std_x").as_double();       // longitudinal position standard deviation in transition (m)
   auto std_y = node->get_parameter("std_y").as_double();       // lateral position standard deviation in transition (m)
   auto std_yaw = node->get_parameter("std_yaw").as_double();   // angle standard deviation in transition (rad)
 
-  auto speed = node->get_parameter("speed").as_double();       // speed (m/s) (assuming it is constant so far)
   auto yaw = node->get_parameter("yaw").as_double();           // yaw angle (rad)
+  auto vx = node->get_parameter("speed").as_double();          // speed (m/s) (assuming it is constant so far)
+  auto vy = 0.0;
 
   // create filter instance and upcast to abstract type
   shared_ptr<SequentialBayesianFilter> f;
-  Vector3d state0(0, 0, yaw);
-  int y_size = 3;
-  int u_size = 2;
+  Vector3d x0(0, 0, yaw);
+  int y_size = 2;
+  int u_size = 3;
   auto type = node->get_parameter("type").as_string();
   if (type == "ekf")
-    f = make_shared<ExtendedKalmanFilter>(ExtendedKalmanFilter(state0, y_size, u_size));
+    f = make_shared<ExtendedKalmanFilter>(x0, y_size, u_size);
   else if (type == "ukf")
-    f = make_shared<UnscentedKalmanFilter>(UnscentedKalmanFilter(state0, y_size, u_size));
+    f = make_shared<UnscentedKalmanFilter>(x0, y_size, u_size);
   else if (type == "pf")
-    f = make_shared<ParticleFilter>(ParticleFilter(state0, y_size, u_size, particles));
+    f = make_shared<ParticleFilter>(x0, y_size, u_size, particles);
   else
     throw logic_error("specified invalid filter type.");
 
@@ -101,30 +102,34 @@ int main(int argc, char* argv[])
     
   double prev_sec = 0.0;  // for laptime
   Vector2d y0(0, 0);      // initial observed position
-  Vector2d y(0, 0);       // current observed position
+  Vector2d y = y0;        // current observed position
+  Vector3d x = x0;        // current state
 
-  // noise description
+  // intentional noise description
   int counter = 0;
   double bias_x = 0.0;
   double bias_y = 0.0;
   auto add_noise_on_observation = [&]()
   {
-    random_device seed_gen;
-    default_random_engine engine(seed_gen());
-    if (counter % (noise_duration * 10) == 0)
+    random_device seed;
+    default_random_engine engine(seed());
+    if (counter % (noise_interval) == 0)
     {
       normal_distribution<> dist(0, 1);
       bias_x = dist(engine);
       bias_y = dist(engine);
     }
-    if (counter / (noise_duration * 10) % 2 == 1)
+    Vector2d yn = y;
+    if (counter / (noise_interval) % 2 == 1)
     {
       normal_distribution<> dist(0, noise_std_dev - 1);
-      y << y(0) + bias_x + dist(engine), y(1) + bias_y + dist(engine);
+      yn(0) += bias_x + dist(engine);
+      yn(1) += bias_y + dist(engine);
       f->R(0, 0) = pow(noise_std_dev, 2);
       f->R(1, 1) = pow(noise_std_dev, 2);
     }
     counter++;
+    return yn;
   };
 
   // INS subscription
@@ -139,15 +144,23 @@ int main(int argc, char* argv[])
       f->dt = sec - prev_sec;
       prev_sec = sec;
       // modify speed variance depending on current yaw angle
-      f->Q(0, 0) = pow(cos(yaw) * std_x - sin(yaw) * std_y, 2);
-      f->Q(1, 1) = pow(sin(yaw) * std_x + cos(yaw) * std_y, 2);
-      add_noise_on_observation();
+      auto qx = cos(yaw) * std_x - sin(yaw) * std_y;
+      auto qy = sin(yaw) * std_x + cos(yaw) * std_y;
+      f->Q(0, 0) = qx * qx;
+      f->Q(0, 1) = qx * qy;
+      f->Q(1, 0) = qx * qy;
+      f->Q(1, 1) = qy * qy;
+      auto yn = add_noise_on_observation();
+      // Jacobian of transition (for EKF)
+      f->A(0, 2) = (-vx * sin(yaw) - vy * cos(yaw)) * f->dt;
+      f->A(1, 2) = (+vx * cos(yaw) - vy * sin(yaw)) * f->dt;
+      // caluclate error (compared to observation without noise)
+      auto error = sqrt(pow(y(0) - x(0), 2) + pow(y(1) - x(1), 2));
       // update filter
-      auto gyro = -msg->angular_velocity.z;
-      auto state = f->predict(Vector3d(speed, 0, gyro));
-      yaw = state(2);
-      RCLCPP_INFO(node->get_logger(), "predicted: (%.2f %.2f), observed: (%.2f %.2f)", state.x(), state.y(), y.x(), y.y());
-      ofs << state.x() << "," << state.y() << "," << y.x() << "," << y.y() << "," << gyro << endl;
+      auto yawrate = -msg->angular_velocity.z;
+      x = f->predict(Vector3d(vx, vy, yawrate));
+      RCLCPP_INFO(node->get_logger(), "predicted: (%.2f %.2f), observed: (%.2f %.2f), error: %.3f", x(0), x(1), yn(0), yn(1), error);
+      ofs << x(0) << "," << x(1) << "," << yn(0) << "," << yn(1) << "," << yawrate << "," << error << endl;
     }
   );
 
@@ -174,10 +187,11 @@ int main(int argc, char* argv[])
   );
 
   rclcpp::spin(node);
-  rclcpp::shutdown();
+
   ofs.close();
   ins = nullptr;
   gnss = nullptr;
   RCLCPP_INFO(node->get_logger(), "Shutdown.");
+  rclcpp::shutdown();
   return 0;
 }
