@@ -76,7 +76,7 @@ public:
     _n = control_vector_size;
     X = VectorXd(x0);
     A = MatrixXd::Identity(_k, _k);
-    B = MatrixXd::Identity(_n, _k);
+    B = MatrixXd::Identity(_k, _n);
     C = MatrixXd::Identity(_m, _k);
     P = MatrixXd::Identity(_k, _k);
     Q = MatrixXd::Identity(_k, _k);
