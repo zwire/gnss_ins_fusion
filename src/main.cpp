@@ -61,14 +61,13 @@ int main(int argc, char* argv[])
   auto std_x = node->get_parameter("std_x").as_double();       // longitudinal position standard deviation in transition (m)
   auto std_y = node->get_parameter("std_y").as_double();       // lateral position standard deviation in transition (m)
   auto std_yaw = node->get_parameter("std_yaw").as_double();   // angle standard deviation in transition (rad)
-
-  auto yaw = node->get_parameter("yaw").as_double();           // yaw angle (rad)
+  
   auto vx = node->get_parameter("speed").as_double();          // speed (m/s) (assuming it is constant so far)
   auto vy = 0.0;
 
   // create filter instance and upcast to abstract type
   shared_ptr<SequentialBayesianFilter> f;
-  Vector3d x0(0, 0, yaw);
+  Vector3d x0(0, 0, node->get_parameter("yaw").as_double());   // yaw angle (rad));
   int y_size = 2;
   int u_size = 3;
   auto type = node->get_parameter("type").as_string();
@@ -144,16 +143,16 @@ int main(int argc, char* argv[])
       f->dt = sec - prev_sec;
       prev_sec = sec;
       // modify speed variance depending on current yaw angle
-      auto qx = cos(yaw) * std_x - sin(yaw) * std_y;
-      auto qy = sin(yaw) * std_x + cos(yaw) * std_y;
+      auto qx = cos(x(2)) * std_x - sin(x(2)) * std_y;
+      auto qy = sin(x(2)) * std_x + cos(x(2)) * std_y;
       f->Q(0, 0) = qx * qx;
       f->Q(0, 1) = qx * qy;
       f->Q(1, 0) = qx * qy;
       f->Q(1, 1) = qy * qy;
       auto yn = add_noise_on_observation();
       // Jacobian of transition (for EKF)
-      f->A(0, 2) = (-vx * sin(yaw) - vy * cos(yaw)) * f->dt;
-      f->A(1, 2) = (+vx * cos(yaw) - vy * sin(yaw)) * f->dt;
+      f->A(0, 2) = (-vx * sin(x(2)) - vy * cos(x(2))) * f->dt;
+      f->A(1, 2) = (+vx * cos(x(2)) - vy * sin(x(2))) * f->dt;
       // caluclate error (compared to observation without noise)
       auto error = sqrt(pow(y(0) - x(0), 2) + pow(y(1) - x(1), 2));
       // update filter
