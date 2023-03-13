@@ -149,7 +149,6 @@ int main(int argc, char* argv[])
       f->Q(0, 1) = qx * qy;
       f->Q(1, 0) = qx * qy;
       f->Q(1, 1) = qy * qy;
-      auto yn = add_noise_on_observation();
       // Jacobian of transition (for EKF)
       f->A(0, 2) = (-vx * sin(x(2)) - vy * cos(x(2))) * f->dt;
       f->A(1, 2) = (+vx * cos(x(2)) - vy * sin(x(2))) * f->dt;
@@ -158,8 +157,8 @@ int main(int argc, char* argv[])
       // update filter
       auto yawrate = -msg->angular_velocity.z;
       x = f->predict(Vector3d(vx, vy, yawrate));
-      RCLCPP_INFO(node->get_logger(), "predicted: (%.2f %.2f), observed: (%.2f %.2f), error: %.3f", x(0), x(1), yn(0), yn(1), error);
-      ofs << x(0) << "," << x(1) << "," << yn(0) << "," << yn(1) << "," << yawrate << "," << error << endl;
+      RCLCPP_INFO(node->get_logger(), "predicted: (%.2f %.2f), observed: (%.2f %.2f), error: %.3f", x(0), x(1), y(0), y(1), error);
+      ofs << x(0) << "," << x(1) << "," << y(0) << "," << y(1) << "," << yawrate << "," << error << endl;
     }
   );
 
@@ -177,6 +176,7 @@ int main(int argc, char* argv[])
       Vector2d p(utm.easting, utm.northing);
       if (y0.x() == 0) y0 = p;
       y = p - y0;
+      y = add_noise_on_observation();
       // 2D position covariance -> observation noise covariance
       f->R(0, 0) = msg->position_covariance[0];
       f->R(1, 1) = msg->position_covariance[4];
