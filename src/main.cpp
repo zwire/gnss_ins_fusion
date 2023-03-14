@@ -40,8 +40,6 @@ int main(int argc, char* argv[])
   // load parameters
   RCLCPP_INFO(node->get_logger(), "Configuring Node...");
   node->declare_parameter("log_path", "");
-  node->declare_parameter("noise_std_dev", 0.0);
-  node->declare_parameter("noise_interval", 0);
   node->declare_parameter("particles", 0);
   node->declare_parameter("type", "");
   node->declare_parameter("std_x", 0.0);
@@ -53,9 +51,6 @@ int main(int argc, char* argv[])
   ofstream ofs(node->get_parameter("log_path").as_string());
   ofs << "predicted,,observed,,,error" << endl;
   ofs << "x,y,x,y,yawrate,m" << endl;
-
-  auto noise_std_dev = node->get_parameter("noise_std_dev").as_double();  // arbitrary addition of noise
-  auto noise_interval = node->get_parameter("noise_interval").as_int();   // iteration
 
   auto particles = node->get_parameter("particles").as_int();  // applied only when using particle filter
   auto std_x = node->get_parameter("std_x").as_double();       // longitudinal position standard deviation in transition (m)
@@ -104,33 +99,6 @@ int main(int argc, char* argv[])
   Vector2d y = y0;        // current observed position
   Vector3d x = x0;        // current state
 
-  // intentional noise description
-  int counter = 0;
-  double bias_x = 0.0;
-  double bias_y = 0.0;
-  auto add_noise_on_observation = [&]()
-  {
-    random_device seed;
-    default_random_engine engine(seed());
-    if (counter % (noise_interval) == 0)
-    {
-      normal_distribution<> dist(0, 1);
-      bias_x = dist(engine);
-      bias_y = dist(engine);
-    }
-    Vector2d yn = y;
-    if (counter / (noise_interval) % 2 == 1)
-    {
-      normal_distribution<> dist(0, noise_std_dev - 1);
-      yn(0) += bias_x + dist(engine);
-      yn(1) += bias_y + dist(engine);
-      f->R(0, 0) = pow(noise_std_dev, 2);
-      f->R(1, 1) = pow(noise_std_dev, 2);
-    }
-    counter++;
-    return yn;
-  };
-
   // INS subscription
   auto ins = node->create_subscription<sensor_msgs::msg::Imu>(
     "/vectornav/IMU", 
@@ -176,7 +144,6 @@ int main(int argc, char* argv[])
       Vector2d p(utm.easting, utm.northing);
       if (y0.x() == 0) y0 = p;
       y = p - y0;
-      y = add_noise_on_observation();
       // 2D position covariance -> observation noise covariance
       f->R(0, 0) = msg->position_covariance[0];
       f->R(1, 1) = msg->position_covariance[4];

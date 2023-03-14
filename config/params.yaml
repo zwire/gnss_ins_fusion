@@ -1,8 +1,6 @@
 gnss_ins_fusion_node:
   ros__parameters:
     log_path: "log.csv"
-    noise_std_dev: 2.0  # intentional addition of noise
-    noise_interval: 150 # iteration
     type: "ukf"         # ekf, ukf, pf
     particles: 300      # applied only when using particle filter
     std_x: 0.05         # longitudinal position standard deviation in transition (m)
